@@ -1,3 +1,9 @@
+# Jenn's Notes
+npm run tauri dev
+
+
+
+
 # AutoSubs – Subtitles Made Simple
 
 Create high‑quality subtitles with **one click**. AutoSubs delivers **fast, accurate, and fully customisable** subtitles in a sleek, intuitive interface. Now works with Davinci Resolve and standalone.
