@@ -66,8 +66,8 @@ interface TranscriptionPanelViewProps {
   livePreviewSegments: any[]
   settings: Settings
   timelineInfo: TimelineInfo
-  selectedFile?: string | null
-  onSelectedFileChange?: (file: string | null) => void
+  selectedFile?: string[] | null
+  onSelectedFileChange?: (file: string[] | null) => void
   onStart?: () => void
   onCancel?: () => void
   isProcessing?: boolean
@@ -105,14 +105,14 @@ function TranscriptionPanelView({
   const uploadIconRef = React.useRef<UploadIconHandle>(null)
   const dropAreaUploadIconRef = React.useRef<UploadIconHandle>(null)
   const [openLanguage, setOpenLanguage] = React.useState(false)
-  const [localSelectedFile, setLocalSelectedFile] = React.useState<string | null>(null)
+  const [localSelectedFile, setLocalSelectedFile] = React.useState<string[] | null>(null)
   const [openTrackSelector, setOpenTrackSelector] = React.useState(false)
   const [openSpeakerPopover, setOpenSpeakerPopover] = React.useState(false)
   const [openTextFormattingPopover, setOpenTextFormattingPopover] = React.useState(false)
 
   const selectedFile = selectedFileProp ?? localSelectedFile
 
-  const setSelectedFile = React.useCallback((file: string | null) => {
+  const setSelectedFile = React.useCallback((file: string[] | null) => {
     setLocalSelectedFile(file)
     onSelectedFileChange?.(file)
   }, [onSelectedFileChange])
@@ -130,9 +130,9 @@ function TranscriptionPanelView({
         if (event.payload.type === "drop") {
           const files = event.payload.paths as string[] | undefined
           if (files && files.length > 0) {
-            const supportedFile = files.find(isSupportedMediaFile)
-            if (supportedFile) {
-              setSelectedFile(supportedFile)
+            const supportedFiles = files.filter(isSupportedMediaFile)
+            if (supportedFiles.length > 0) {
+              setSelectedFile(supportedFiles)
             }
           }
         }
@@ -144,8 +144,8 @@ function TranscriptionPanelView({
   }, [setSelectedFile])
 
   const handleFileSelect = async () => {
-    const file = await open({
-      multiple: false,
+    const files = await open({
+      multiple: true,
       directory: false,
       filters: [{
         name: t("actionBar.fileDialog.mediaFiles"),
@@ -153,7 +153,14 @@ function TranscriptionPanelView({
       }],
       defaultPath: await downloadDir(),
     })
-    setSelectedFile(file)
+    
+    if (files) {
+      if (Array.isArray(files)) {
+        setSelectedFile(files)
+      } else {
+        setSelectedFile([files as string])
+      }
+    }
   }
 
   const handleTrackSelectorOpen = async (open: boolean) => {
@@ -364,11 +371,11 @@ function TranscriptionPanelView({
                 onMouseEnter={() => dropAreaUploadIconRef.current?.startAnimation()}
                 onMouseLeave={() => dropAreaUploadIconRef.current?.stopAnimation()}
               >
-                {selectedFile ? (
+                {selectedFile && selectedFile.length > 0 ? (
                   <div className="flex flex-col items-center gap-1">
                     <UploadIcon ref={dropAreaUploadIconRef} size={24} className="text-green-500" />
                     <span className="text-sm font-medium text-muted-foreground truncate max-w-full px-2">
-                      {selectedFile.split("/").pop()}
+                      {selectedFile.length === 1 ? selectedFile[0].split("/").pop() : `${selectedFile.length} files selected`}
                     </span>
                   </div>
                 ) : (
@@ -438,24 +445,24 @@ export function TranscriptionPanel({ onViewSubtitles }: { onViewSubtitles?: () =
   const [isProcessing, setIsProcessing] = React.useState(false)
   const [, setTranscriptionProgress] = React.useState(0)
   const [, setLabeledProgress] = React.useState<{ progress: number, type?: string, label?: string } | null>(null)
-  const [fileInput, setFileInput] = React.useState<string | null>(null)
+  const [fileInput, setFileInput] = React.useState<string[] | null>(null)
   const [fileInputSelectionId, setFileInputSelectionId] = React.useState(0)
   const [openModelSelector, setOpenModelSelector] = React.useState(false)
   const isSmallScreen = useMediaQuery("(max-width: 640px)")
   const progressContainerRef = React.useRef<HTMLDivElement>(null)
 
-  const handleSelectedFileChange = React.useCallback((file: string | null) => {
+  const handleSelectedFileChange = React.useCallback((file: string[] | null) => {
     setFileInput(file)
-    setFileInputSelectionId((v) => v + 1)
+    setFileInputSelectionId((v: number) => v + 1)
   }, [])
 
   React.useEffect(() => {
     const run = async () => {
       if (!settings.isStandaloneMode) return
-      if (!fileInput) return
+      if (!fileInput || fileInput.length === 0) return
 
       try {
-        await loadSubtitles(true, fileInput, timelineInfo?.timelineId ?? "standalone")
+        await loadSubtitles(true, fileInput[0], timelineInfo?.timelineId ?? "standalone")
       } catch (error) {
         console.error("Failed to load subtitles for selected file:", error)
       }
@@ -526,60 +533,69 @@ export function TranscriptionPanel({ onViewSubtitles }: { onViewSubtitles?: () =
       return
     }
 
-    if (settings.isStandaloneMode && !fileInput) {
+    if (settings.isStandaloneMode && (!fileInput || fileInput.length === 0)) {
       console.error("No file selected")
       return
     }
 
     setIsProcessing(true)
-    setTranscriptionProgress(0)
-    clearProgressSteps()
 
-    setupEventListeners({
-      targetLanguage: settings.targetLanguage,
-      language: settings.language,
-      isResolveMode: !settings.isStandaloneMode,
-      hasPendingDownloads,
-      enableDiarize: settings.enableDiarize,
-    })
-
-    const audioInfo = await getSourceAudio(
-      settings.isStandaloneMode,
-      fileInput,
-      settings.selectedInputTracks,
-    )
-
-    if (!audioInfo) {
-      console.error("Failed to get audio")
-      setIsProcessing(false)
-      return
-    }
+    const filesToProcess = settings.isStandaloneMode ? fileInput! : [null]
 
     try {
-      const options: TranscriptionOptions = {
-        audioPath: audioInfo.path,
-        offset: Math.round(audioInfo.offset * 1000) / 1000,
-        model: modelsState[settings.model].value,
-        lang: settings.language,
-        translate: settings.translate,
-        targetLanguage: settings.targetLanguage,
-        enableDtw: settings.enableDTW,
-        enableGpu: settings.enableGpu,
-        enableDiarize: settings.enableDiarize,
-        maxSpeakers: settings.maxSpeakers,
-        density: settings.textDensity,
+      for (const currentFile of filesToProcess) {
+        if (cancelRequestedRef.current) {
+          console.log("Batch processing cancelled by user")
+          break
+        }
+
+        setTranscriptionProgress(0)
+        clearProgressSteps()
+
+        setupEventListeners({
+          targetLanguage: settings.targetLanguage,
+          language: settings.language,
+          isResolveMode: !settings.isStandaloneMode,
+          hasPendingDownloads,
+          enableDiarize: settings.enableDiarize,
+        })
+
+        const audioInfo = await getSourceAudio(
+          settings.isStandaloneMode,
+          currentFile,
+          settings.selectedInputTracks,
+        )
+
+        if (!audioInfo) {
+          console.error(`Failed to get audio for ${currentFile}`)
+          continue // skip to next file
+        }
+
+        const options: TranscriptionOptions = {
+          audioPath: audioInfo.path,
+          offset: Math.round(audioInfo.offset * 1000) / 1000,
+          model: modelsState[settings.model].value,
+          lang: settings.language,
+          translate: settings.translate,
+          targetLanguage: settings.targetLanguage,
+          enableDtw: settings.enableDTW,
+          enableGpu: settings.enableGpu,
+          enableDiarize: settings.enableDiarize,
+          maxSpeakers: settings.maxSpeakers,
+          density: settings.textDensity,
+        }
+
+        const transcript = await invoke("transcribe_audio", { options })
+
+        completeAllProgressSteps()
+
+        await processTranscriptionResults(
+          transcript as any,
+          settings,
+          currentFile,
+          timelineInfo.timelineId,
+        )
       }
-
-      const transcript = await invoke("transcribe_audio", { options })
-
-      completeAllProgressSteps()
-
-      await processTranscriptionResults(
-        transcript as any,
-        settings,
-        fileInput,
-        timelineInfo.timelineId,
-      )
     } catch (error) {
       console.error("Transcription failed:", error)
     } finally {
