@@ -26,9 +26,9 @@ interface TranscriptContextType {
   setCurrentTranscriptFilename: (filename: string | null) => void;
   updateSpeakers: (newSpeakers: Speaker[]) => Promise<void>;
   updateSubtitles: (newSubtitles: Subtitle[], filename?: string) => Promise<void>;
-  processTranscriptionResults: (transcript: any, settings: Settings, fileInput: string | null, timelineId: string) => Promise<string>;
+  processTranscriptionResults: (transcript: any, settings: Settings, fileInput: string | null, timelineId: string) => Promise<{ filename: string; segments: Subtitle[]; speakers: Speaker[] }>;
   reformatSubtitles: (settings: Settings, fileInput: string | null, timelineId: string) => Promise<void>;
-  exportSubtitlesAs: (format: 'srt' | 'txt', subtitles?: Subtitle[], speakers?: Speaker[]) => Promise<void>;
+  exportSubtitlesAs: (format: 'srt' | 'txt', subtitles?: Subtitle[], speakers?: Speaker[], destinationPath?: string) => Promise<void>;
   importSubtitles: (settings: Settings, fileInput: string | null, timelineId: string) => Promise<void>;
   loadSubtitles: (isStandaloneMode: boolean, fileInput: string | null, timelineId: string) => Promise<void>;
 }
@@ -111,7 +111,7 @@ export function TranscriptProvider({ children }: { children: React.ReactNode }) 
     settings: Settings, 
     fileInput: string | null, 
     timelineId: string
-  ): Promise<string> => {
+  ): Promise<{ filename: string; segments: Subtitle[]; speakers: Speaker[] }> => {
     // Generate filename for new transcript based on mode and input
     const filename = generateTranscriptFilename(
       settings.isStandaloneMode,
@@ -149,7 +149,7 @@ export function TranscriptProvider({ children }: { children: React.ReactNode }) 
     setSubtitles(segments)
     console.log("Subtitle list updated with", segments.length, "subtitles")
 
-    return filename
+    return { filename, segments, speakers };
   }
 
   const reformatSubtitles = async (settings: Settings, fileInput: string | null, timelineId: string) => {
@@ -192,7 +192,8 @@ export function TranscriptProvider({ children }: { children: React.ReactNode }) 
   async function exportSubtitlesAs(
     format: 'srt' | 'txt', 
     subtitlesParam?: Subtitle[],
-    speakersParam?: Speaker[]
+    speakersParam?: Speaker[],
+    destinationPath?: string
   ) {
     const subtitlesToExport = subtitlesParam || subtitles;
     const speakersToExport = speakersParam || speakers;
@@ -202,19 +203,23 @@ export function TranscriptProvider({ children }: { children: React.ReactNode }) 
         throw new Error('No subtitles available to export');
       }
 
-      const defaultPath = format === 'srt' ? 'subtitles.srt' : 'transcript.txt';
-      const filters = format === 'srt'
-        ? [{ name: 'SRT Files', extensions: ['srt'] }]
-        : [{ name: 'Text Files', extensions: ['txt'] }];
-
-      const filePath = await save({
-        defaultPath,
-        filters,
-      });
-
+      let filePath: string | null | undefined = destinationPath;
+      
       if (!filePath) {
-        console.log('Save was canceled');
-        return;
+        const defaultPath = format === 'srt' ? 'subtitles.srt' : 'transcript.txt';
+        const filters = format === 'srt'
+          ? [{ name: 'SRT Files', extensions: ['srt'] }]
+          : [{ name: 'Text Files', extensions: ['txt'] }];
+
+        filePath = await save({
+          defaultPath,
+          filters,
+        });
+
+        if (!filePath) {
+          console.log('Save was canceled');
+          return;
+        }
       }
 
       if (format === 'srt') {

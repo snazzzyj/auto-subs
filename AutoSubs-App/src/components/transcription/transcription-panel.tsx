@@ -489,7 +489,7 @@ export function TranscriptionPanel({ onViewSubtitles }: { onViewSubtitles?: () =
       enableDiarize: settings.enableDiarize,
     })
 
-    return cleanup
+    return () => { void cleanup() }
   }, [setupEventListeners, settings.targetLanguage, settings.language, settings.isStandaloneMode, hasPendingDownloads, settings.enableDiarize])
 
   React.useEffect(() => {
@@ -541,6 +541,8 @@ export function TranscriptionPanel({ onViewSubtitles }: { onViewSubtitles?: () =
 
     const filesToProcess = settings.isStandaloneMode ? fileInput! : [null]
 
+    let cleanupListeners: (() => Promise<void>) | null = null
+
     try {
       for (const currentFile of filesToProcess) {
         if (cancelRequestedRef.current) {
@@ -548,10 +550,16 @@ export function TranscriptionPanel({ onViewSubtitles }: { onViewSubtitles?: () =
           break
         }
 
+        // Clean up listeners from the previous iteration before registering new ones
+        if (cleanupListeners) {
+          await cleanupListeners()
+          cleanupListeners = null
+        }
+
         setTranscriptionProgress(0)
         clearProgressSteps()
 
-        setupEventListeners({
+        cleanupListeners = setupEventListeners({
           targetLanguage: settings.targetLanguage,
           language: settings.language,
           isResolveMode: !settings.isStandaloneMode,
@@ -588,12 +596,24 @@ export function TranscriptionPanel({ onViewSubtitles }: { onViewSubtitles?: () =
 
         completeAllProgressSteps()
 
-        await processTranscriptionResults(
+        const { segments, speakers } = await processTranscriptionResults(
           transcript as any,
           settings,
           currentFile,
           timelineInfo.timelineId,
         )
+
+        if (settings.isStandaloneMode && currentFile) {
+          try {
+            const lastDotIndex = currentFile.lastIndexOf('.')
+            const srtPath = lastDotIndex !== -1 
+              ? currentFile.substring(0, lastDotIndex) + ".srt" 
+              : currentFile + ".srt"
+            await exportSubtitlesAs("srt", segments, speakers, srtPath)
+          } catch (autoExportError) {
+            console.error("Failed auto-exporting SRT:", autoExportError)
+          }
+        }
       }
     } catch (error) {
       console.error("Transcription failed:", error)

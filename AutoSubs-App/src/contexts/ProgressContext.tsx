@@ -21,7 +21,7 @@ interface ProgressContextType {
   completeAllProgressSteps: () => void;
   cancelAllProgressSteps: () => void;
   updateProgressStep: (event: { progress: number; type?: string; label?: string }) => void;
-  setupEventListeners: (settings: { targetLanguage: string; language: string; isResolveMode?: boolean; hasPendingDownloads?: boolean; enableDiarize?: boolean }) => () => void;
+  setupEventListeners: (settings: { targetLanguage: string; language: string; isResolveMode?: boolean; hasPendingDownloads?: boolean; enableDiarize?: boolean }) => () => Promise<void>;
 }
 
 const ProgressContext = createContext<ProgressContextType | null>(null);
@@ -224,16 +224,20 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
       enableDiarize: settings.enableDiarize ?? false,
     };
     
+    // Array to hold unlisten functions so we can clean up later
+    const unlisteners: Array<() => void> = [];
+
     const setup = async () => {
       try {
         // Single progress listener that directly updates steps array
-        await listen<{ progress: number, type?: string, label?: string }>('labeled-progress', (event: { payload: any }) => {
+        const unlistenProgress = await listen<{ progress: number, type?: string, label?: string }>('labeled-progress', (event: { payload: any }) => {
           console.log('Received progress event:', JSON.stringify(event.payload, null, 2));
           updateProgressStep(event.payload);
         });
+        unlisteners.push(unlistenProgress);
         
         // New segment listener for live preview
-        await listen<string>('new-segment', (event: { payload: any }) => {
+        const unlistenSegment = await listen<string>('new-segment', (event: { payload: any }) => {
           console.log('Received new segment:', event.payload);
           
           // Check if this segment text already exists to prevent duplicates
@@ -268,24 +272,28 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
             return [...prev, newSegment];
           });
         });
+        unlisteners.push(unlistenSegment);
         
         // Clear live preview and seen segments when transcription completes
-        await listen('transcription-complete', () => {
+        const unlistenComplete = await listen('transcription-complete', () => {
           console.log('Transcription complete, clearing live preview');
           setLivePreviewSegments([]);
           seenSegmentsRef.current.clear();
         });
+        unlisteners.push(unlistenComplete);
         
       } catch (error) {
         console.error('Failed to set up progress listener:', error);
       }
     };
     
-    setup();
+    const setupPromise = setup();
     
-    // Return cleanup function
-    return () => {
-      // Cleanup handled automatically by Tauri when component unmounts
+    // Return async cleanup function that waits for setup then calls all unlisteners
+    return async () => {
+      await setupPromise;
+      unlisteners.forEach(fn => fn());
+      unlisteners.length = 0;
     };
   }, []);
 
